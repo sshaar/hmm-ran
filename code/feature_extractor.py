@@ -24,8 +24,8 @@ TEST_NUM = 150
 # The main directory path that contains all the genre folders.
 DIRECTORY_PATH = "/home/sabith/hmm-rnn/data/genres/"
 # The name of genres in the DIRECTORY_PATH.
-# GENRE_LIST = ['blues/', 'classical/', 'country/', 'disco/', 'hiphop/', 'jazz/', 'metal/', 'pop/', 'reggae/']
-GENRE_LIST = ['jazz/']
+GENRE_LIST = ['blues/', 'classical/', 'country/', 'disco/', 'hiphop/', 'jazz/', 'metal/', 'pop/', 'reggae/']
+# GENRE_LIST = ['classical/']
 
 
 # This function takes in a directory path and return all the audio files of
@@ -88,11 +88,21 @@ def extract_audio_features_list(list_of_audiofiles):
         genre = re.split('[ /]', splits[0])[-1]
         target.append(genre)
 
+        mfcc = mfcc.T
+        spectral_center = spectral_center.T
+        chroma = chroma.T
+        spectral_contrast = spectral_contrast.T
+
+        mfcc = np.pad(mfcc, ((0, timeseries_length-mfcc.shape[0]), (0, 0)), 'edge')
+        spectral_center = np.pad(spectral_center, ((0, timeseries_length-spectral_center.shape[0]), (0, 0)), 'edge')
+        chroma = np.pad(chroma, ((0, timeseries_length-chroma.shape[0]), (0, 0)), 'edge')
+        spectral_contrast = np.pad(spectral_contrast, ((0, timeseries_length-spectral_contrast.shape[0]), (0, 0)), 'edge')
+
         # Place the received data in the data holder.
-        data[i, :, 0:20] = mfcc.T[0:timeseries_length, :]
-        data[i, :, 20:21] = spectral_center.T[0:timeseries_length, :]
-        data[i, :, 21:33] = chroma.T[0:timeseries_length, :]
-        data[i, :, 33:40] = spectral_contrast.T[0:timeseries_length, :]
+        data[i, :, 0:20] = mfcc[0:timeseries_length, :]
+        data[i, :, 20:21] = spectral_center[0:timeseries_length, :]
+        data[i, :, 21:33] = chroma[0:timeseries_length, :]
+        data[i, :, 33:40] = spectral_contrast[0:timeseries_length, :]
 
         print("Extracted features audio track %i of %i." % (i + 1, len(list_of_audiofiles)))
 
@@ -169,3 +179,12 @@ def extract_audio_features(directory_name):
     return {"train": (train_feat, train_label), "dev": (dev_feat, dev_label), "test": (test_feat, test_label)}
 
 data = extract_audio_features(DIRECTORY_PATH)
+
+tri = data["train"]
+np.savez("train.npz", feat=tri[0], target=tri[1])
+
+tri = data["dev"]
+np.savez("dev.npz", feat=tri[0], target=tri[1])
+
+tri = data["test"]
+np.savez("test.npz", feat=tri[0], target=tri[1])

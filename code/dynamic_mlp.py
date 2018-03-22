@@ -1,13 +1,6 @@
-import torch.nn as nn
-import torch
-
 import os
-
 import numpy as np
-
-import os
 import math
-import numpy as np
 from collections import Counter
 
 import torch
@@ -15,9 +8,12 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.autograd import Variable
-from torch.utils.data import DataLoader
+from torch.utils.data import *
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+
+ACCUM_GRAD = 10
 
 
 class Flatten(nn.Module):
@@ -31,6 +27,7 @@ class Flatten(nn.Module):
 class DynamicMLP(nn.Module):
     def __init__(self, input_size, output_size, num_layers=5, hidden_size=256):
         super(DynamicMLP, self).__init__()
+        # All the layers in the states of the HMM.
         self.layers = []
 
         for i in range(num_layers):
@@ -58,47 +55,140 @@ class DynamicMLP(nn.Module):
 
         return self.flatten(self.decoder(output))
 
-data = np.load('train.npz')
+class DataClass (Dataset):
+    def __init__ (self, feats, label, seq):
+        self.feats = feats
+        self.labels = label
+        self.seq = seq
 
-feat = data['feat']
-label = data['target']
-label_h = np.zeros(label.shape, dtype=int)
+    def __getitem__ (self, index):
+        return (self.feats[index], self.labels[index], seq[index])
 
-for i in range(label.shape[0]):
-    if i < label.shape[0]/2:
-        label_h[i] = 0
-    else:
-        label_h[i] = 1
+    def __len__(self):
+        return self.feats.shape[0]
+
+def my_collate(batch):
+    feats = np.array([item[0] for item in batch])
+    labels = np.array([item[1] for item in batch])
+    seqs = np.array([item[2] for item in batch])
+    return (feats, labels, seqs)
+
+def label_to_int(labels):
+    print ("LABELS", labels)
+    a = list (map (lambda x : 1 if ("blues" in x[0]) else 0, labels))
+    print (a)
+    return np.array(a)
 
 
-feat = Variable(torch.from_numpy(feat), requires_grad=True).float()
-label = Variable(torch.from_numpy(label_h)).long()
-print label
+def load_data(batch_size, shuffle):
+    ## loads training, validation and testing data
+    train_data = np.load("/home/sshaar/hmm-rnn/train.npz")
+    train_seq = np.load("/home/sshaar/hmm-rnn/train-HMMSeq.npz")
+    valid_data = np.load("/home/sshaar/hmm-rnn/valid.npz")
+    valid_seq = np.load("/home/sshaar/hmm-rnn/valid-HMMSeq.npz")
+    test_data = np.load("/home/sshaar/hmm-rnn/test.npz")
+    test_seq = np.load("/home/sshaar/hmm-rnn/test-HMMSeq.npz")
 
-# audio = feat[0]
+    ## creates dataset for the training, validation, test data
+    train_data = DataClass(train_data["feat"], label_to_int(train_data["target"]), train_seq)
+    valid_data = DataClass(valid_data["feat"], label_to_int(valid_data["target"]), valid_seq)
+    test_data = DataClass(test_data["feat"], label_to_int(test_data["target"]), test_seq)
 
-dd = DynamicMLP(40, 2)
-# output = dd(audio, [1]*130)
-# print(output.grad)
+    ## data loaders for training, validation and testing data
+    train_loader = DataLoader(dataset = train_data, collate_fn = my_collate, shuffle = shuffle, batch_size = batch_size)
+    valid_loader = DataLoader(dataset = valid_data, collate_fn = my_collate, shuffle = shuffle, batch_size = batch_size)
+    test_loader = DataLoader(dataset = test_data, collate_fn = my_collate, shuffle = shuffle, batch_size = batch_size)
 
-criterion = torch.nn.CrossEntropyLoss()
+    return (train_loader, valid_loader, test_loader)
 
-optimizer = torch.optim.SGD(dd.parameters(), lr=1e-4, momentum=0.9)
-dd.train()
-for i in range(feat.shape[0]):
-    audio = feat[i]
+def train(epochs=10, learning_rate=0.01, batch_size=1, input_size=5200, hidden_size=2000, num_layers=5, shuffle=True):
 
-    output_audio = dd(audio, [1]*130)
+    train_loader, valid_loader, test_loader = load_data(1, True)
 
-    loss = criterion(output_audio, label[i])
-    loss.backward()
+    model = DynamicMLP(input_size, output_size, num_layers=num_layers, hidden_size=hidden_size)
+    if GPU:
+        model.cuda()
 
-    optimizer.step()
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 
-    if (i+1) % 10 == 0:
-        optimizer.zero_grad()
+    for epoch in range(epochs):
 
-    print i, loss.data[0]
+        model.train()
+        start_time = time.time()
+        total_loss = 0.0
+        for i, (data, labels, hmm_seq) in enumerate(train_loader):
+            data = Variable(torch.from_numpy(data), requires_grad=True).float()
+            labels = Variable(torch.from_numpy(labels)).long()
+
+            if GPU:
+                data.cuda()
+                labels.cuda()
+
+            ouput = model(data, hmm_seq)
+
+            loss = criterion(ouput, labels)
+            loss.backward()
+
+            optimizer.step()
+
+            if (i+1) % ACCUM_GRAD == 0:
+                optimizer.zero_grad()
+
+            total_loss += loss.data[0]
+            elapsed = time.time() - start_time
+            s = 'Valid Epoch: {} [{}]\tLoss: {:.6f}\tTime: {:5.2f} '.format( epoch+1, i, total_loss/(i+1), elapsed)
+            print s
+
+        model.eval()
+        start_time = time.time()
+        total_loss = 0.0
+        for i, (data, labels, hmm_seq) in enumerate(valid_loader):
+            data = Variable(torch.from_numpy(data), requires_grad=True).float()
+            labels = Variable(torch.from_numpy(labels)).long()
+
+            if GPU:
+                data.cuda()
+                labels.cuda()
+
+            ouput = model(data, hmm_seq)
+            loss = criterion(ouput, labels)
+
+            total_loss += loss.data[0]
+            elapsed = time.time() - start_time
+            s = 'Valid Epoch: {} [{}]\tLoss: {:.6f}\tTime: {:5.2f} '.format( epoch+1, i, total_loss/(i+1), elapsed)
+            print s
+
+train()
+
+# feat = Variable(torch.from_numpy(feat), requires_grad=True).float()
+# label = Variable(torch.from_numpy(label_h)).long()
+# print label
+#
+# # audio = feat[0]
+#
+# dd = DynamicMLP(40, 2)
+# # output = dd(audio, [1]*130)
+# # print(output.grad)
+#
+# criterion = torch.nn.CrossEntropyLoss()
+#
+# optimizer = torch.optim.SGD(dd.parameters(), lr=1e-4, momentum=0.9)
+# dd.train()
+# for i in range(feat.shape[0]):
+#     audio = feat[i]
+#
+#     output_audio = dd(audio, [1]*130)
+#
+#     loss = criterion(output_audio, label[i])
+#     loss.backward()
+#
+#     optimizer.step()
+#
+#     if (i+1) % 10 == 0:
+#         optimizer.zero_grad()
+#
+#     print i, loss.data[0]
 
 
 
