@@ -73,9 +73,31 @@ def my_collate(batch):
     seqs = np.array([item[2] for item in batch])
     return (feats, labels, seqs)
 
+def change_label(x):
+    if ("blues" in x):
+        return 0
+    elif ("classical" in x):
+        return 1
+    elif ("country" in x):
+        return 2
+    elif ("disco" in x):
+        return 3
+    elif ("hiphop" in x):
+        return 4
+    elif ("jazz" in x):
+        return 5
+    elif ("metal" in x):
+        return 6
+    elif ("pop" in x):
+        return 7
+    elif ("reggae" in x):
+        return 8
+
+
+
 def label_to_int(labels):
     print ("LABELS", labels)
-    a = list (map (lambda x : 1 if ("blues" in x[0]) else 0, labels))
+    a = list (map (lambda x : change_label(x[0]), labels))
     print (a)
     return np.array(a)
 
@@ -83,11 +105,11 @@ def label_to_int(labels):
 def load_data(batch_size, shuffle):
     ## loads training, validation and testing data
     train_data = np.load("/home/sshaar/hmm-rnn/train.npz")
-    train_seq = np.load("/home/sshaar/hmm-rnn/train-HMMSeq.npz")
-    valid_data = np.load("/home/sshaar/hmm-rnn/valid.npz")
-    valid_seq = np.load("/home/sshaar/hmm-rnn/valid-HMMSeq.npz")
+    train_seq = np.load("../../data/train_seqs3.npy")
+    valid_data = np.load("/home/sshaar/hmm-rnn/dev.npz")
+    valid_seq = np.load("../../data/valid_seqs3.npy")
     test_data = np.load("/home/sshaar/hmm-rnn/test.npz")
-    test_seq = np.load("/home/sshaar/hmm-rnn/test-HMMSeq.npz")
+    test_seq = np.load("../../data/test_seqs3.npy")
 
     ## creates dataset for the training, validation, test data
     train_data = DataClass(train_data["feat"], label_to_int(train_data["target"]), train_seq)
